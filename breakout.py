@@ -5,11 +5,10 @@ import threading
 
 def init_screen():
     stdscr = curses.initscr()
-    curses.curs_set(0)
-    stdscr.keypad(True)
-    curses.noecho()
-    curses.cbreak()
-    stdscr.nodelay(True)
+    curses.curs_set(0)  # Hide the cursor
+    stdscr.keypad(True)  # Enable keypad mode for arrow keys
+    curses.noecho()  # Don't echo input
+    curses.cbreak()  # React to keys instantly
 
     if curses.has_colors():
         curses.start_color()
@@ -18,52 +17,52 @@ def init_screen():
         curses.init_pair(2, curses.COLOR_GREEN, -1)    # Paddle
         curses.init_pair(3, curses.COLOR_YELLOW, -1)   # Ball
         curses.init_pair(4, curses.COLOR_CYAN, -1)     # Pause Message
+
     return stdscr
 
-def draw_game(stdscr, game_state):
-    stdscr.clear()
-    stdscr.border(0)
+def draw_game(game_win, game_state):
+    game_win.clear()
+    game_win.border(0)
 
-    height, width = stdscr.getmaxyx()
+    height, width = game_win.getmaxyx()
 
     # Draw bricks
-    stdscr.attron(curses.color_pair(1))
+    game_win.attron(curses.color_pair(1))
     for y, x in game_state["bricks"]:
-        if 0 <= y < height and 0 <= x < width: 
-            for i in range(4):
-                for j in range(2):
-                    if 0 <= y + j < height and 0 <= x + i < width:
-                        stdscr.addch(y + j, x + i, "#")
-    stdscr.attroff(curses.color_pair(1))
+        if 0 <= y < height and 0 <= x < width:
+            for i in range(4):  # 4x1 bricks
+                if 0 <= y < height and 0 <= x + i < width:
+                    game_win.addch(y, x + i, "#")
+    game_win.attroff(curses.color_pair(1))
 
     # Draw paddle
-    stdscr.attron(curses.color_pair(2))
+    game_win.attron(curses.color_pair(2))
     paddle_y = height - 2
-    for i in range(8):
+    for i in range(10):  # Increased paddle size to make it easier
         paddle_x = game_state["paddle_x"] + i
         if 0 <= paddle_x < width - 1:
-            stdscr.addch(paddle_y, paddle_x, "=")
-    stdscr.attroff(curses.color_pair(2))
+            game_win.addch(paddle_y, paddle_x, "=")
+    game_win.attroff(curses.color_pair(2))
 
     # Draw ball
-    stdscr.attron(curses.color_pair(3))
+    game_win.attron(curses.color_pair(3))
     ball_y, ball_x = game_state["ball_y"], game_state["ball_x"]
     if 0 <= ball_y < height and 0 <= ball_x < width:
-        stdscr.addch(ball_y, ball_x, "O")
-    stdscr.attroff(curses.color_pair(3))
+        game_win.addch(ball_y, ball_x, "O")
+    game_win.attroff(curses.color_pair(3))
 
     # Display score and lives
-    stdscr.addstr(0, 2, f"Score: {game_state['score']}  Lives: {game_state['lives']}")
+    game_win.addstr(0, 2, f"Score: {game_state['score']}  Lives: {game_state['lives']}")
 
     # Display pause message
     if game_state["paused"]:
-        stdscr.attron(curses.color_pair(4))
-        stdscr.addstr(height // 2, width // 2 - 3, "Paused")
-        stdscr.attroff(curses.color_pair(4))
+        game_win.attron(curses.color_pair(4))
+        game_win.addstr(height // 2, width // 2 - 3, "Paused")
+        game_win.attroff(curses.color_pair(4))
 
-    stdscr.refresh()
+    game_win.refresh()
 
-def move_ball(stdscr, game_state, height, width):
+def move_ball(game_win, game_state, height, width, pause_event):
     while not game_state["game_over"]:
         if not game_state["paused"]:
             game_state["ball_y"] += game_state["ball_dir_y"]
@@ -77,16 +76,22 @@ def move_ball(stdscr, game_state, height, width):
                 game_state["ball_dir_y"] *= -1
 
             # Ball collision with paddle
-            if (game_state["ball_y"] == height - 3 and
-                game_state["paddle_x"] <= game_state["ball_x"] < game_state["paddle_x"] + 8):
+            if game_state["ball_y"] == height - 3 and game_state["paddle_x"] <= game_state["ball_x"] < game_state["paddle_x"] + 10:
                 game_state["ball_dir_y"] *= -1
-                game_state["ball_dir_x"] = random.choice([-1, 0, 1])
+                # Ball reflects at an angle based on where it hits the paddle
+                paddle_hit_position = game_state["ball_x"] - game_state["paddle_x"]
+                if paddle_hit_position < 3:
+                    game_state["ball_dir_x"] = -1
+                elif paddle_hit_position > 6:
+                    game_state["ball_dir_x"] = 1
+                else:
+                    game_state["ball_dir_x"] = 0
 
             # Ball collision with bricks
             new_bricks = []
             for y, x in game_state["bricks"]:
-                if (y <= game_state["ball_y"] <= y + 1 and
-                    x <= game_state["ball_x"] <= x + 3):
+                if (y <= game_state["ball_y"] <= y and
+                    x <= game_state["ball_x"] <= x + 3):  # Updated to handle 4x1 bricks
                     game_state["ball_dir_y"] *= -1
                     game_state["score"] += 10
                 else:
@@ -106,46 +111,60 @@ def move_ball(stdscr, game_state, height, width):
             if not game_state["bricks"]:
                 game_state["game_over"] = True
 
-            draw_game(stdscr, game_state)
-            time.sleep(0.1)
-        else:
-            time.sleep(0.1)
+        draw_game(game_win, game_state)
+        time.sleep(0.1)  # Adjusted speed for better control
+
+def input_thread(game_win, game_state, pause_event):
+    while not game_state["game_over"]:
+        key = game_win.getch()
+
+        if key != -1:
+            if key == curses.KEY_LEFT and game_state["paddle_x"] > 1:
+                game_state["paddle_x"] -= 4
+            elif key == curses.KEY_RIGHT and game_state["paddle_x"] + 10 < game_win.getmaxyx()[1] - 1:
+                game_state["paddle_x"] += 4
+            elif key == ord('q'):  # Quit the game
+                game_state["game_over"] = True
+            elif key == ord('p'):  # Pause the game
+                game_state["paused"] = not game_state["paused"]
+                if game_state["paused"]:
+                    pause_event.set()  # Pause ball movement
+                else:
+                    pause_event.clear()  # Resume ball movement
 
 def breakout(stdscr):
     stdscr = init_screen()
     height, width = stdscr.getmaxyx()
 
+    # Adjusted bricks for easier gameplay
     game_state = {
-        "paddle_x": width // 2 - 4,
+        "paddle_x": width // 2 - 5,  # Starting position of paddle (adjusted for longer paddle)
         "ball_x": width // 2,
-        "ball_y": height - 4,
+        "ball_y": 20,
         "ball_dir_x": random.choice([-1, 1]),
         "ball_dir_y": -1,
-        "bricks": [(y, x) for y in range(3, 12, 3) for x in range(4, width - 4, 8)],
+        "bricks": [(y, x) for y in range(3, 8, 3) for x in range(4, width - 4, 6)],  # Closer bricks
         "score": 0,
-        "lives": 3,
+        "lives": 5,  # Increased lives for easier gameplay
         "game_over": False,
         "paused": False,
     }
 
-    ball_thread = threading.Thread(target=move_ball, args=(stdscr, game_state, height, width))
-    ball_thread.daemon = True
-    ball_thread.start()
+    pause_event = threading.Event()
 
-    while not game_state["game_over"]:
-        key = stdscr.getch()
-        if key == curses.KEY_LEFT and game_state["paddle_x"] > 1:
-            game_state["paddle_x"] -= 4
-        elif key == curses.KEY_RIGHT and game_state["paddle_x"] + 8 < width - 1:
-            game_state["paddle_x"] += 4
-        elif key == ord('q'):
-            game_state["game_over"] = True
-        elif key == ord('p'):
-            game_state["paused"] = not game_state["paused"]
+    # Create input and ball movement threads
+    input_thread_instance = threading.Thread(target=input_thread, args=(stdscr, game_state, pause_event))
+    ball_thread_instance = threading.Thread(target=move_ball, args=(stdscr, game_state, height, width, pause_event))
 
-        draw_game(stdscr, game_state)
-        time.sleep(0.03)
+    # Start the threads
+    input_thread_instance.start()
+    ball_thread_instance.start()
 
+    # Wait for threads to finish
+    input_thread_instance.join()
+    ball_thread_instance.join()
+
+    # Game Over message
     stdscr.addstr(height // 2, width // 2 - 5, "Game Over!" if game_state["lives"] == 0 else "You Win!")
     stdscr.refresh()
     time.sleep(2)
